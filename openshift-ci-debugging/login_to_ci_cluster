@@ -26,11 +26,8 @@ function wait_for_pod(){
 }
 
 function _wait_for_e2e_to_start(){
-	e2e_pod=`get_e2e_pod`
-	ipi_pod=`get_ipi_install_pod`
 	max_iter=${1:-60}
 	sleep_time=${2:-60}
-
 	e_ts=0
 	i_ts=1
 
@@ -43,6 +40,7 @@ function _wait_for_e2e_to_start(){
 		fi
 
 		# Wait for e2e to be newer than ipi
+		ipi_pod=`get_ipi_install_pod`
 		i_date=`oc get po $ipi_pod --template '{{.metadata.creationTimestamp}}'`
 		echo "install timestamp: $i_date"
 		i_ts=`date '+%s' --date="$i_date" 2> /dev/null`
@@ -50,6 +48,7 @@ function _wait_for_e2e_to_start(){
 			i_ts=1
 		fi
 
+		e2e_pod=`get_e2e_pod`
 		e_date=`oc get po $e2e_pod --template '{{.metadata.creationTimestamp}}'`
 		echo "e2etest timestamp: $e_date"
 		e_ts=`date '+%s' --date="$e_date" 2> /dev/null`
@@ -166,7 +165,7 @@ function login_with_token(){
 
 function main() {
 	echo -ne "\n\n=== Logging into Command Cluster ===\n" >&2
-	login_with_token $CI_CLUSTER
+	login_with_token $CI_CLUSTER_INPUT
 	if [[ "$?" -ne 0 ]]; then
 		echo "Could not log into Command cluster, exiting."
 		exit 1
@@ -206,7 +205,6 @@ while getopts "u:t:b:" option; do
 	case ${option} in
 		u)
 			CI_CLUSTER_INPUT=${OPTARG}
-			echo "FOO"
 			;;
 		t)
 			CI_CLUSTER_TOKEN_INPUT=${OPTARG}
@@ -219,8 +217,6 @@ while getopts "u:t:b:" option; do
 			exit;;
 	esac
 done
-
-echo $CI_CLUSTER_INPUT
 
 # Param Validation
 if [[ -z "$CI_CLUSTER_INPUT" ]]; then 
