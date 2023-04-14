@@ -1,7 +1,14 @@
 #!/bin/bash
 
+# Defined Values
 E2E_REGEX="e2e-\S*e2e"
 IPI_REGEX="install-\S*install"
+
+# Defined Commands
+REGEX_CMD="grep -P"  # TODO: handle Mac shells, where is "grep -p"
+OC3_CMD="oc3.11"  #TODO: figure out a way to just use oc instead
+OC4_CMD="oc"
+CUT_CMD="cut"
 
 function usage(){
 	echo "Usage: $0 [-u COMMAND_CLUSTER_URL] [-t LOGIN_TOKEN] [-b BROWSER_COMMAND] [-h]";
@@ -24,7 +31,7 @@ function wait_for_pod(){
 			break;
 		fi		
 		sleep $sleeptime
-		oc get po -oname | grep -P $pod_regex
+		$OC4_CMD get po -oname | $REGEX_CMD $pod_regex
 	done
 }
 
@@ -44,7 +51,7 @@ function _wait_for_e2e_to_start(){
 
 		# Wait for e2e to be newer than ipi
 		ipi_pod=`get_ipi_install_pod`
-		i_date=`oc get po $ipi_pod --template '{{.metadata.creationTimestamp}}'`
+		i_date=`$OC4_CMD get po $ipi_pod --template '{{.metadata.creationTimestamp}}'`
 		echo "install timestamp: $i_date"
 		i_ts=`date '+%s' --date="$i_date" 2> /dev/null`
 		if [[ "$?" -ne 0 ]]; then
@@ -52,7 +59,7 @@ function _wait_for_e2e_to_start(){
 		fi
 
 		e2e_pod=`get_e2e_pod`
-		e_date=`oc get po $e2e_pod --template '{{.metadata.creationTimestamp}}'`
+		e_date=`$OC4_CMD get po $e2e_pod --template '{{.metadata.creationTimestamp}}'`
 		echo "e2etest timestamp: $e_date"
 		e_ts=`date '+%s' --date="$e_date" 2> /dev/null`
 		if [[ "$?" -ne 0 ]]; then
@@ -67,13 +74,13 @@ function _wait_for_e2e_to_start(){
 }
 
 function _get_hostname(){
-	echo $1 | cut -d "/" -f 3
+	echo $1 | $CUT_CMD -d "/" -f 3
 }
 
 function change_to_project_from_url(){
 	url=$1
 	project=${url##*/}
-	oc project $project
+	$OC4_CMD project $project
 }
 
 function _format_api_url() {
@@ -103,24 +110,25 @@ function get_oauth_endpoint(){
 	_format_oauth_url $hostname
 }
 
+# TODO: remove
 function _get_pod_by_snippet(){
 	snipped=$1
-	oc get po -oname | grep "$snipped" | cut -d "/" -f 2
+	$OC4_CMD get po -oname | grep "$snipped" | $CUT_CMD -d "/" -f 2
 }
 
 function _get_pod_by_regex(){
 	snipped=$1
-	oc get po -oname | grep -P "$snipped" | cut -d "/" -f 2
+	$OC4_CMD get po -oname | $REGEX_CMD "$snipped" | $CUT_CMD -d "/" -f 2
 }
 
 function _exec_on_pod(){
 	target=$1
 	cmd=$2
-	oc exec $target -- $cmd
+	$OC4_CMD exec $target -- $cmd
 }
 
 function get_ipi_install_pod(){
-	_get_pod_by_snippet "$IPI_REGEX"
+	_get_pod_by_regex "$IPI_REGEX"
 }
 
 function get_e2e_pod(){
@@ -161,7 +169,7 @@ function login_with_token(){
 		token=`open_token_req_page $url`
 	fi
 	echo "Attempting to log into $api_endpoint..."
-	oc login --token="$token" --server=$api_endpoint
+	$OC4_CMD login --token="$token" --server=$api_endpoint
 	change_to_project_from_url $url
 }
 
@@ -193,7 +201,7 @@ function main() {
 
 	echo -ne "\n\n=== Log into CI Cluster Endpoint ===\n" >&2
 	echo "Attempting to log into $test_login..."
-	oc3.11 login --insecure-skip-tls-verify=true -u kubeadmin $test_login -p $kubeadmin_pwd
+	$OC3_CMD login --insecure-skip-tls-verify=true -u kubeadmin $test_login -p $kubeadmin_pwd
 	if [[ "$?" -ne 0 ]]; then
 		echo "Could not log into CI Cluster, exiting."
 		exit 1 
