@@ -1,5 +1,8 @@
 #!/bin/bash
 
+E2E_REGEX="e2e-\S*e2e"
+IPI_REGEX="install-\S*install"
+
 function usage(){
 	echo "Usage: $0 [-u COMMAND_CLUSTER_URL] [-t LOGIN_TOKEN] [-b BROWSER_COMMAND] [-h]";
 	echo "      -u COMMAND_CLUSTER_URL: the cluster URL, including scheme (https://) and project endpoint (/k8s/cluster/projects/ci-op-xxxxx)"
@@ -21,7 +24,7 @@ function wait_for_pod(){
 			break;
 		fi		
 		sleep $sleeptime
-		oc get po -oname | grep $pod_regex
+		oc get po -oname | grep -P $pod_regex
 	done
 }
 
@@ -117,11 +120,11 @@ function _exec_on_pod(){
 }
 
 function get_ipi_install_pod(){
-	_get_pod_by_snippet "install-install"
+	_get_pod_by_snippet "$IPI_REGEX"
 }
 
 function get_e2e_pod(){
-	_get_pod_by_regex "e2e-\S+-e2e"
+	_get_pod_by_regex "$E2E_REGEX"
 }
 
 function get_kubeadmin_password_ipi(){
@@ -173,7 +176,7 @@ function main() {
 
 	echo -ne "\n\n=== Fetching CI Cluster Credentials ===\n" >&2
 	_wait_for_e2e_to_start
-	wait_for_pod "e2e-e2e" 5 10
+	wait_for_pod "$E2E_REGEX" 5 10
 	e2e_pod=`get_e2e_pod`
 	kubeadmin_pwd=`get_kubeadmin_password_e2e $e2e_pod`
 	if [[ "$?" -ne 0 ]]; then
