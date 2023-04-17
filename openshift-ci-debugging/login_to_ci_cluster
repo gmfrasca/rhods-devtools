@@ -5,7 +5,7 @@ E2E_REGEX="e2e-\S*e2e"
 IPI_REGEX="install-\S*install"
 
 # Defined Commands
-REGEX_CMD="grep -P"  # TODO: handle Mac shells, where is "grep -p"
+REGEX_CMD="grep -E"
 OC3_CMD="oc3.11"  #TODO: figure out a way to just use oc instead
 OC4_CMD="oc"
 CUT_CMD="cut"
@@ -175,6 +175,7 @@ function login_with_token(){
 
 
 function main() {
+
 	echo -ne "\n\n=== Logging into Command Cluster ===\n" >&2
 	login_with_token $CI_CLUSTER_INPUT
 	if [[ "$?" -ne 0 ]]; then
