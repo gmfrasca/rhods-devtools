@@ -1,0 +1,241 @@
+#!/bin/bash
+
+# Defined Values
+E2E_REGEX="e2e-\S*e2e"
+IPI_REGEX="install-\S*install"
+
+# Defined Commands
+REGEX_CMD="grep -E"
+OC3_CMD="oc3.11"  #TODO: figure out a way to just use oc instead
+OC4_CMD="oc"
+CUT_CMD="cut"
+
+function usage(){
+	echo "Usage: $0 [-u COMMAND_CLUSTER_URL] [-t LOGIN_TOKEN] [-b BROWSER_COMMAND] [-h]";
+	echo "      -u COMMAND_CLUSTER_URL: the cluster URL, including scheme (https://) and project endpoint (/k8s/cluster/projects/ci-op-xxxxx)"
+	echo "      -t CI_CLUSTER_TOKEN: login token to the command cluster, if known"
+	echo "      -b BROWSER_COMMAND: the bash command to pull up a browser window (given url as a param). Default: firefox"
+	echo "      -h: Show this dialog"
+	exit 0;
+}
+
+function wait_for_pod(){
+	pod_regex=$1
+	sleeptime=$2
+ 	iterations=$3
+	i=0
+
+	found=1
+	while [[ "$found" -ne 0 ]]; do
+		if [[ "$i" -lt "$iterations" ]]; then
+			break;
+		fi		
+		sleep $sleeptime
+		$OC4_CMD get po -oname | $REGEX_CMD $pod_regex
+	done
+}
+
+function _wait_for_e2e_to_start(){
+	max_iter=${1:-60}
+	sleep_time=${2:-60}
+	e_ts=0
+	i_ts=1
+
+	echo "Checking if both Install and e2e Test Pods have started by comparing creation timestamps"
+	echo "Repeating check every ${sleep_time} seconds for a maximum ${max_iter} times."
+	while [[ $e_ts -lt $i_ts ]]; do
+		echo ""
+		if [[ "$i" -gt "$max_iter" ]]; then
+		   break;
+		fi
+
+		# Wait for e2e to be newer than ipi
+		ipi_pod=`get_ipi_install_pod`
+		i_date=`$OC4_CMD get po $ipi_pod --template '{{.metadata.creationTimestamp}}'`
+		echo "install timestamp: $i_date"
+		i_ts=`date '+%s' --date="$i_date" 2> /dev/null`
+		if [[ "$?" -ne 0 ]]; then
+			i_ts=1
+		fi
+
+		e2e_pod=`get_e2e_pod`
+		e_date=`$OC4_CMD get po $e2e_pod --template '{{.metadata.creationTimestamp}}'`
+		echo "e2etest timestamp: $e_date"
+		e_ts=`date '+%s' --date="$e_date" 2> /dev/null`
+		if [[ "$?" -ne 0 ]]; then
+			e_ts=0
+		fi
+
+		if [[  $e_ts -lt $i_ts ]]; then
+		    sleep $sleep_time
+		fi;
+	done
+
+}
+
+function _get_hostname(){
+	echo $1 | $CUT_CMD -d "/" -f 3
+}
+
+function change_to_project_from_url(){
+	url=$1
+	project=${url##*/}
+	$OC4_CMD project $project
+}
+
+function _format_api_url() {
+	url=$1
+	baseurl=`echo $url | sed 's/^[^\.]*\.[^\.]*\.//g'`
+	echo "https://api.$baseurl:6443"
+}
+
+function _format_oauth_url() {
+	url=$1
+	baseurl=`echo $url | sed 's/^[^\.]*\.[^\.]*\.//g'`
+	echo "https://oauth-openshift.apps.$baseurl/oauth/token/display"
+}
+
+function get_api_endpoint(){
+	url=$1
+	echo "Parsing and templating API endpoint out of $url" >&2
+	hostname=`_get_hostname $url`
+	_format_api_url $hostname
+	
+}
+
+function get_oauth_endpoint(){
+	url=$1
+	echo "Parsing and templating OAuth endpoint out of $url" >&2
+	hostname=`_get_hostname $url`
+	_format_oauth_url $hostname
+}
+
+# TODO: remove
+function _get_pod_by_snippet(){
+	snipped=$1
+	$OC4_CMD get po -oname | grep "$snipped" | $CUT_CMD -d "/" -f 2
+}
+
+function _get_pod_by_regex(){
+	snipped=$1
+	$OC4_CMD get po -oname | $REGEX_CMD "$snipped" | $CUT_CMD -d "/" -f 2
+}
+
+function _exec_on_pod(){
+	target=$1
+	cmd=$2
+	$OC4_CMD exec $target -- $cmd
+}
+
+function get_ipi_install_pod(){
+	_get_pod_by_regex "$IPI_REGEX"
+}
+
+function get_e2e_pod(){
+	_get_pod_by_regex "$E2E_REGEX"
+}
+
+function get_kubeadmin_password_ipi(){
+	ipi_pod=$1
+	echo "Retrieving kubeadmin password from $ipi_pod" >&2
+	_exec_on_pod $ipi_pod "cat /tmp/installer/auth/kubeadmin-password"
+}
+
+function get_kubeadmin_password_e2e(){
+	e2e_pod=$1
+	echo "Retrieving kubeadmin password from $e2e_pod" >&2
+	_exec_on_pod $e2e_pod "cat /tmp/secret/kubeadmin-password"
+}
+
+function get_console_url_e2e(){
+	e2e_pod=$1
+	echo "Retrieving CI console url from $e2e_pod" >&2
+	_exec_on_pod $e2e_pod "cat /tmp/secret/console.url"
+}
+
+function open_token_req_page(){
+	url=$1
+	oauth_page=`get_oauth_endpoint $url`
+	$BROWSER_CMD $oauth_page
+	read -p "Enter Oauth Token after logging in: " oauth_token
+	echo $oauth_token
+}
+
+function login_with_token(){
+	url=$1
+	api_endpoint=`get_api_endpoint $url`
+	token=${CI_CLUSTER_TOKEN_INPUT}
+	if [[ -z "$CI_CLUSTER_TOKEN_INPUT" ]]; then
+		token=`open_token_req_page $url`
+	fi
+	echo "Attempting to log into $api_endpoint..."
+	$OC4_CMD login --token="$token" --server=$api_endpoint
+	change_to_project_from_url $url
+}
+
+
+function main() {
+
+	echo -ne "\n\n=== Logging into Command Cluster ===\n" >&2
+	login_with_token $CI_CLUSTER_INPUT
+	if [[ "$?" -ne 0 ]]; then
+		echo "Could not log into Command cluster, exiting."
+		exit 1
+	fi
+
+	echo -ne "\n\n=== Fetching CI Cluster Credentials ===\n" >&2
+	_wait_for_e2e_to_start
+	wait_for_pod "$E2E_REGEX" 5 10
+	e2e_pod=`get_e2e_pod`
+	kubeadmin_pwd=`get_kubeadmin_password_e2e $e2e_pod`
+	if [[ "$?" -ne 0 ]]; then
+		echo "Could not get CI Cluster Credentials, exiting."
+		exit 1
+	fi
+
+	echo -ne "\n\n=== Fetch CI Cluster Endpoint ===\n" >&2
+        test_url=`get_console_url_e2e $e2e_pod`
+	test_login=`get_api_endpoint $test_url`
+	echo "CI API Endpoint: $test_login" >&2
+	echo "CI User: kubeadmin" >&2
+	echo "CI Password: $kubeadmin_pwd" >&2
+
+	echo -ne "\n\n=== Log into CI Cluster Endpoint ===\n" >&2
+	echo "Attempting to log into $test_login..."
+	$OC3_CMD login --insecure-skip-tls-verify=true -u kubeadmin $test_login -p $kubeadmin_pwd
+	if [[ "$?" -ne 0 ]]; then
+		echo "Could not log into CI Cluster, exiting."
+		exit 1 
+	fi
+}
+
+# Defaults
+BROWSER_CMD=firefox
+
+# Parse args
+while getopts "u:t:b:" option; do
+	case ${option} in
+		u)
+			CI_CLUSTER_INPUT=${OPTARG}
+			;;
+		t)
+			CI_CLUSTER_TOKEN_INPUT=${OPTARG}
+			;;
+		b)
+			BROWSER_CMD=${OPTARG}
+			;;
+		*)
+			usage
+			exit;;
+	esac
+done
+
+# Param Validation
+if [[ -z "$CI_CLUSTER_INPUT" ]]; then 
+	echo "ERROR: -u CI_CLUSTER_URL is a required argument"
+	usage
+	exit 1
+fi
+
+# Run Script
+main
